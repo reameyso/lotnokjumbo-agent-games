@@ -51,5 +51,5 @@ export const config = {
     extractDisabled: intEnv("STEAL_EXTRACT_DISABLED", 0),
   },
   dataDir: process.env.DATA_DIR || path.join(ROOT, "data"),
-  circuitsDir: path.join(ROOT, "circuits"),
+  circuitsDir: process.env.CIRCUITS_DIR || path.join(ROOT, "circuits"),
 };

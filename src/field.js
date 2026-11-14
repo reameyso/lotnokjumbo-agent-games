@@ -1,4 +1,6 @@
 // BN254 field helpers (Groth16 / bn128 curve order field).
+import { keccak_256 } from "@noble/hashes/sha3.js";
+
 export const BN254_P = BigInt(
   "21888242871839275222246405745257275088548364400416034343698204186575808495617",
 );
@@ -32,4 +34,26 @@ export function randomSalt31() {
   const buf = new Uint8Array(31);
   globalThis.crypto.getRandomValues(buf);
   return modP(BigInt("0x" + Buffer.from(buf).toString("hex"))).toString(10);
+}
+
+/**
+ * Deterministic gatekeeper salt: keccak256(utf8(taskId) || utf8(secret))
+ * mod BN254 p, as a decimal string.
+ *
+ * Purpose: on stateless hosts (Vercel serverless) there is no durable
+ * store, so a retry of the same task on a fresh instance must reproduce
+ * the IDENTICAL proof. Deriving the salt from (taskId, secret) makes the
+ * proof a pure function of the task + deployment secret, so retries
+ * reproduce byte-identical responses without any stored state.
+ * The salt is a private circuit input; knowing it does not weaken the
+ * proof (Groth16 soundness does not depend on salt secrecy), and the
+ * secret here is the deployment's own HMAC secret, never logged.
+ */
+export function deterministicSalt(taskId, secret) {
+  const data = Buffer.concat([
+    Buffer.from(String(taskId), "utf8"),
+    Buffer.from(String(secret || ""), "utf8"),
+  ]);
+  const digest = keccak_256(data);
+  return modP(BigInt("0x" + Buffer.from(digest).toString("hex"))).toString(10);
 }

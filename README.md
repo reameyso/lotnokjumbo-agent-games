@@ -11,13 +11,52 @@ competitor handle **lotnokjumbo**. Two tracks on one endpoint:
 Plain Node.js, no framework, no LLM in the decision path. Decisions are
 deterministic; a failed proof never changes a decision.
 
-## Run
+## Deploy
+
+### Local / persistent host
 
 ```bash
 npm install
 cp .env.example .env   # fill in the secrets (see below)
 npm start              # listens on $PORT (default 3000)
 ```
+
+The JSON store (`./data` by default) keeps the seen-set and the response
+cache on disk, so `PROOF_REUSED` detection survives restarts.
+
+### Vercel (serverless, free tier)
+
+The same code also runs as a Vercel serverless function — see
+`api/agent.js` + `vercel.json`. Deploy from this repo (Vercel dashboard →
+Add New → Project → import `reameyso/lotnokjumbo-agent-games`), then set
+these env vars in Project Settings → Environment Variables:
+
+| Variable | Meaning |
+|---|---|
+| `AGENT_GAMES_HMAC_SECRET` | **Required.** The real dashboard secret (Rotate Secret, shown once). Without it, all POSTs 401. |
+| `AGENT_GAMES_HMAC_SECRET_STEAL` | Steal registration secret (only if the Steal track is registered) |
+| `STEAL_SALT` / `STEAL_*` | Steal commitment inputs (only if the Steal track is registered) |
+
+Endpoint: `https://<project>.vercel.app/api/agent` — register exactly this
+path as the agent endpoint on the dashboard, then run preflight.
+
+**Statelessness tradeoff (free tier):** Vercel functions are ephemeral —
+the seen-set / response cache lives in memory + `/tmp` and does NOT
+survive across instances. A `PROOF_REUSED` trap that lands on a fresh
+instance may therefore be APPROVED instead of rejected (the earlier
+APPROVE is not remembered cross-instance). Retry idempotency still holds:
+the gatekeeper salt is deterministic per `(task_id, HMAC secret)`, so a
+retry reproduces the identical proof and response body even on a fresh
+instance. After registering the agent and rotating the secret, replace the
+test secret with the real one in the Vercel env vars (never commit it).
+
+Deploy-time checks that could not be verified locally: whether
+`includeFiles: "circuits/**"` actually bundles the wasm/zkey/VK files into
+the function (the code probes `repo/circuits`, `cwd/circuits`, and
+`/var/task/circuits` at startup), the cold-start time (local proving is
+~1.2 s; the function `maxDuration` is set to 60 s), and that Vercel
+honours `bodyParser: false` for the raw-body HMAC check. Verify with a
+signed preflight against the deployed URL right after the first deploy.
 
 ## Protocol
 
@@ -111,17 +150,25 @@ npm test   # decision unit tests, proof tests, preflight round-trip
 - `test/preflight.test.mjs` — signed preflight / gatekeeper / retry round-trip
   against a live server with a test-only secret, both key forms, and the
   no-secret 401 case.
+- The Vercel handler (`api/agent.js`) was tested the same way via a
+  throwaway script (deleted after): GET health, signed preflight,
+  gatekeeper APPROVE with a locally verified proof using the deterministic
+  salt, VK_SUBSTITUTION trap, and retry idempotency — all PASS.
 
 ## Layout
 
 ```
-src/server.js    HTTP server, HMAC gate, routing, idempotency
+src/handler.js   shared request handler (local server + Vercel function)
+src/server.js    HTTP server (thin wrapper over handler.js)
+api/agent.js     Vercel serverless function (thin wrapper over handler.js)
+api/env.js       Vercel env defaults (runs before any src/ import)
+vercel.json      maxDuration 60, includeFiles circuits/**
 src/decision.js  Gatekeeper decision logic (pure)
 src/prover.js    snarkjs Groth16 proving + local verification
 src/steal.js     Steal policy, commitment, hashes, UUIDv5
 src/hmac.js      HMAC-SHA256 verify/sign (UTF-8 / hex key forms)
 src/store.js     JSON store: seen-set + response cache
-src/field.js     BN254 field helpers
+src/field.js     BN254 field helpers (+ deterministic gatekeeper salt)
 circuits/        gatekeeper + vfy-policy wasm/zkey/VK (from agentgames.zkverify.io)
 ```
 

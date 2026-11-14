@@ -1,6 +1,6 @@
 # Deployment status
 
-## Current state (2026-11-14 ~23:50 WIB)
+## Current state (2026-11-15 ~00:30 WIB)
 
 - The server runs **locally, supervised** (`run/run-server.sh` restart loop,
   port 3000) and answers the health check. It is NOT reachable from the
@@ -10,6 +10,17 @@
   (`test-secret-for-local-only`). After the agent is registered and the
   dashboard secret is rotated, set the real `AGENT_GAMES_HMAC_SECRET` in
   `.env` and restart (`run/run-server.sh` picks it up on restart).
+- **Vercel adaptation DONE (2026-11-15 ~00:30 WIB):** `api/agent.js` +
+  `vercel.json` added; the protocol logic was extracted into
+  `src/handler.js` (shared by the local server and the Vercel function).
+  Gatekeeper salt is now deterministic per (task_id, HMAC secret), so
+  retries reproduce identical proofs even on stateless instances. All
+  local tests pass (existing suite + throwaway Vercel handler test: GET,
+  preflight, APPROVE with locally verified proof, VK_SUBSTITUTION trap,
+  retry idempotency). Awaiting the user's Vercel login to deploy — endpoint
+  will be `https://<project>.vercel.app/api/agent`. Deploy-time checks
+  still open: `includeFiles` bundling of circuits, cold-start time,
+  `maxDuration: 60` on the Hobby plan, `bodyParser: false` behaviour.
 
 ## Public endpoint: BLOCKED by the sandbox egress proxy
 
