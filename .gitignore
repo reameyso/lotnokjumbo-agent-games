@@ -2,3 +2,8 @@ node_modules/
 .env
 data/
 *.log
+run/cloudflared
+run/node_modules/
+run/*.log
+run/package.json
+run/package-lock.json
