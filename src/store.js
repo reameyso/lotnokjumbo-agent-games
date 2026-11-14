@@ -87,3 +87,37 @@ export function createStore(dataDir) {
     },
   };
 }
+
+// In-memory-only store with the same interface as createStore().
+// Used when the file store cannot be created (e.g. a read-only or
+// missing DATA_DIR on a serverless host): the agent keeps working, it
+// just loses persistence across restarts. Never throws.
+export function createMemoryStore() {
+  const state = { seen: { competition: [], practice: [] }, responses: {}, steal: {} };
+  const normTx = (tx) => String(tx).trim().toLowerCase();
+  return {
+    state,
+    hasSeen(mode, proofTx) {
+      const set = state.seen[mode] || [];
+      return set.includes(normTx(proofTx));
+    },
+    markSeen(mode, proofTx) {
+      if (!state.seen[mode]) state.seen[mode] = [];
+      const tx = normTx(proofTx);
+      if (!state.seen[mode].includes(tx)) state.seen[mode].push(tx);
+    },
+    getResponse(key) {
+      return state.responses[key] || null;
+    },
+    putResponse(key, body, salt) {
+      state.responses[key] = { body, salt };
+    },
+    getSteal(key) {
+      return state.steal[key] || null;
+    },
+    putSteal(key, body) {
+      state.steal[key] = { body };
+    },
+    saveNow() {},
+  };
+}

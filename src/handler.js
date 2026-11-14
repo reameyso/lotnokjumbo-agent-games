@@ -29,7 +29,7 @@
 // (see DEPLOYMENT.md) or add a shared KV store.
 import { config } from "./config.js";
 import { hmacHex, keyCandidates, verifySignature } from "./hmac.js";
-import { createStore } from "./store.js";
+import { createMemoryStore, createStore } from "./store.js";
 import { decideGatekeeper } from "./decision.js";
 import { Prover, buildGatekeeperInputs, withDeadline } from "./prover.js";
 import { deterministicSalt } from "./field.js";
@@ -48,8 +48,25 @@ const PROOF_BUDGET_MS = 45_000;
 const PROOF_MARGIN_MS = 5_000;
 const MAX_BODY_BYTES = 1_000_000;
 
-const store = createStore(config.dataDir);
-const prover = new Prover(config.circuitsDir);
+// Module-scope state. BOTH are resilient: a missing/unreadable DATA_DIR
+// falls back to an in-memory store, and missing circuit files (e.g. a
+// Vercel bundle that did not include them) leave prover null — the agent
+// still answers health checks, preflight and decisions, just without
+// attached proofs. A crash at import time would fail EVERY invocation,
+// including GET health checks, so nothing here is allowed to throw.
+let store;
+try {
+  store = createStore(config.dataDir);
+} catch (e) {
+  console.warn(`[handler] file store unavailable (${e.message}); using memory store`);
+  store = createMemoryStore();
+}
+let prover = null;
+try {
+  prover = new Prover(config.circuitsDir);
+} catch (e) {
+  console.warn(`[handler] prover unavailable (${e.message}); decisions will carry no proof`);
+}
 
 // Steal commitment (derived from env params + salt; the salt itself is
 // never logged). Undefined when STEAL_SALT is not set -> Steal falls back
@@ -153,7 +170,7 @@ async function handleGatekeeper(env) {
           budget = Math.min(budget, deadlineMs - PROOF_MARGIN_MS - Date.now());
         }
       }
-      if (budget > 0) {
+      if (budget > 0 && prover) {
         const result = await withDeadline(prover.gatekeeper(inputs), budget);
         if (result.ok) {
           response.proof = result.value.proof;
@@ -162,6 +179,8 @@ async function handleGatekeeper(env) {
           // A failed proof NEVER changes the decision.
           console.warn(`[gatekeeper] proof failed for ${taskId}: ${result.reason}`);
         }
+      } else if (!prover) {
+        console.warn(`[gatekeeper] prover unavailable for ${taskId}; decision without proof`);
       } else {
         console.warn(`[gatekeeper] no proof budget left for ${taskId}`);
       }
@@ -242,6 +261,9 @@ async function handleSteal(env) {
 
     let proof = null;
     let publicSignals = null;
+    if (!prover) {
+      console.warn(`[steal] prover unavailable for ${matchId} turn ${turn}; falling back to HOLD`);
+    } else {
     try {
       const inputs = buildStealInputs({
         commitment: stealCommitment,
@@ -279,6 +301,7 @@ async function handleSteal(env) {
       }
     } catch (e) {
       console.warn(`[steal] proof error for ${matchId} turn ${turn}: ${e.message}`);
+    }
     }
 
     let body;
